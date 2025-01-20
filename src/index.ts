@@ -6,78 +6,109 @@ export interface Env {
   HYPERDRIVE: Hyperdrive;
 }
 
+// Add CORS headers to all responses
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Max-Age': '86400',
+};
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Handle OPTIONS request for CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: corsHeaders
+      });
+    }
+
     const sql = postgres(env.HYPERDRIVE.connectionString);
     const url = new URL(request.url);
     const path = url.pathname;
 
     try {
-      switch (path) {
-        // Account routes
-        case '/api/accounts':
-          return await getAccounts(sql);
-        case '/api/account-balances':
-          const address = url.searchParams.get('address');
-          if (!address) return Response.json({ error: 'Address required' }, { status: 400 });
-          return await getAccountBalances(sql, address);
+      const response = await handleRoute(path, sql, url);
+      
+      // Add CORS headers to the response
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
 
-        // Lootbox routes
-        case '/api/lootboxes':
-          return await getLootboxes(sql);
-        case '/api/lootbox-analytics':
-          return await getLootboxAnalytics(sql);
-        case '/api/lootbox-purchases':
-          return await getLootboxPurchases(sql);
-        case '/api/lootbox-rewards':
-          return await getLootboxRewards(sql);
-
-        // Token routes
-        case '/api/tokens':
-          return await getTokens(sql);
-        case '/api/token-collections':
-          return await getTokenCollections(sql);
-        case '/api/token-transactions':
-          return await getTokenTransactions(sql);
-        case '/api/token-balances':
-          return await getTokenBalances(sql);
-        case '/api/token-data':
-          return await getTokenData(sql);
-        case '/api/token-deposits':
-          return await getTokenDeposits(sql);
-        case '/api/token-withdraws':
-          return await getTokenWithdraws(sql);
-        case '/api/token-burns':
-          return await getTokenBurns(sql);
-        case '/api/token-mints':
-          return await getTokenMints(sql);
-        case '/api/token-claims':
-          return await getTokenClaims(sql);
-
-        // Rarity routes
-        case '/api/rarities':
-          return await getRarities(sql);
-
-        // Event routes
-        case '/api/event-tracking':
-          return await getEventTracking(sql);
-
-        // VRF routes
-        case '/api/vrf-callbacks':
-          return await getVRFCallbacks(sql);
-
-        default:
-          return Response.json({ error: 'Not found' }, { status: 404 });
-      }
+      return response;
     } catch (error: any) {
       console.error('Error:', error);
-      return Response.json({ error: error.message }, { status: 500 });
+      return new Response(
+        JSON.stringify({ error: error.message }), 
+        { 
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders
+          }
+        }
+      );
     } finally {
       await sql.end();
     }
   },
 } satisfies ExportedHandler<Env>;
 
+// Helper function to handle routes
+async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<Response> {
+  switch (path) {
+    case '/api/accounts':
+      return await getAccounts(sql);
+    case '/api/account-balances':
+      const address = url.searchParams.get('address');
+      if (!address) return Response.json({ error: 'Address required' }, { status: 400 });
+      return await getAccountBalances(sql, address);
+    case '/api/lootboxes':
+      return await getLootboxes(sql);
+    case '/api/lootbox-analytics':
+      return await getLootboxAnalytics(sql);
+    case '/api/lootbox-purchases':
+      return await getLootboxPurchases(sql);
+    case '/api/lootbox-rewards':
+      return await getLootboxRewards(sql);
+    case '/api/tokens':
+      return await getTokens(sql);
+    case '/api/token-collections':
+      return await getTokenCollections(sql);
+    case '/api/token-transactions':
+      return await getTokenTransactions(sql);
+    case '/api/token-balances':
+      return await getTokenBalances(sql);
+    case '/api/token-data':
+      return await getTokenData(sql);
+    case '/api/token-deposits':
+      return await getTokenDeposits(sql);
+    case '/api/token-withdraws':
+      return await getTokenWithdraws(sql);
+    case '/api/token-burns':
+      return await getTokenBurns(sql);
+    case '/api/token-mints':
+      return await getTokenMints(sql);
+    case '/api/token-claims':
+      return await getTokenClaims(sql);
+    case '/api/rarities':
+      return await getRarities(sql);
+    case '/api/event-tracking':
+      return await getEventTracking(sql);
+    case '/api/vrf-callbacks':
+      return await getVRFCallbacks(sql);
+    default:
+      return new Response(
+        JSON.stringify({ error: 'Not found' }), 
+        { 
+          status: 404,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+  }
+}
 
 // Account queries
 async function getAccounts(sql: postgres.Sql) {
