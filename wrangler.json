@@ -1,0 +1,14 @@
+{
+  "name": "crystara-hyperdrive-prod-v2",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-08-21",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "4e51c1f51c454623a5e405d053ea6d5a"
+    }
+  ]
+}
