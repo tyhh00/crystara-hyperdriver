@@ -57,65 +57,112 @@ export default {
 // Helper function to handle routes
 async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<Response> {
   switch (path) {
-    case '/api/accounts':
+    // Account routes
+    case '/api/accounts': {
       return await getAccounts(sql);
-    case '/api/account-balances':
+    }
+    case '/api/account-balances': {
       const address = url.searchParams.get('address');
       if (!address) return Response.json({ error: 'Address required' }, { status: 400 });
       return await getAccountBalances(sql, address);
-    case '/api/lootboxes':
+    }
+
+    // Lootbox routes
+    case '/api/lootboxes': {
       return await getLootboxes(sql);
-    case '/api/lootbox-analytics':
+    }
+    case '/api/lootbox-analytics': {
       return await getLootboxAnalytics(sql);
-    case '/api/lootbox-purchases':
+    }
+    case '/api/lootbox-purchases': {
       return await getLootboxPurchases(sql);
-    case '/api/lootbox-rewards':
+    }
+    case '/api/lootbox-rewards': {
       return await getLootboxRewards(sql);
-    case '/api/tokens':
-      return await getTokens(sql);
-    case '/api/token-collections':
-      return await getTokenCollections(sql);
-    case '/api/token-transactions':
-      return await getTokenTransactions(sql);
-    case '/api/token-balances':
-      return await getTokenBalances(sql);
-    case '/api/token-data':
-      return await getTokenData(sql);
-    case '/api/token-deposits':
-      return await getTokenDeposits(sql);
-    case '/api/token-withdraws':
-      return await getTokenWithdraws(sql);
-    case '/api/token-burns':
-      return await getTokenBurns(sql);
-    case '/api/token-mints':
-      return await getTokenMints(sql);
-    case '/api/token-claims':
-      return await getTokenClaims(sql);
-    case '/api/rarities':
-      return await getRarities(sql);
-    case '/api/event-tracking':
-      return await getEventTracking(sql);
-    case '/api/vrf-callbacks':
-      return await getVRFCallbacks(sql);
-    case '/api/lootbox':
+    }
+    case '/api/lootbox': {
       const creator = url.searchParams.get('creator');
       const collection = url.searchParams.get('collection');
       if (!creator || !collection) {
         return Response.json({ error: 'Creator address and collection name required' }, { status: 400 });
       }
       return await getLootboxByCreatorAndCollection(sql, creator, collection);
-    case '/api/rarities-by-lootbox':
+    }
+
+    // Token routes
+    case '/api/tokens': {
+      return await getTokens(sql);
+    }
+    case '/api/token-collections': {
+      return await getTokenCollections(sql);
+    }
+    case '/api/token-transactions': {
+      return await getTokenTransactions(sql);
+    }
+    case '/api/token-balances': {
+      return await getTokenBalances(sql);
+    }
+    case '/api/token-data': {
+      return await getTokenData(sql);
+    }
+    case '/api/token-deposits': {
+      return await getTokenDeposits(sql);
+    }
+    case '/api/token-withdraws': {
+      return await getTokenWithdraws(sql);
+    }
+    case '/api/token-burns': {
+      return await getTokenBurns(sql);
+    }
+    case '/api/token-mints': {
+      return await getTokenMints(sql);
+    }
+    case '/api/token-claims': {
+      return await getTokenClaims(sql);
+    }
+    case '/api/tokens-by-lootbox': {
+      const lootboxId = url.searchParams.get('lootboxId');
+      if (!lootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
+      return await getTokensByLootboxId(sql, parseInt(lootboxId));
+    }
+    case '/api/tokens-by-collection': {
+      const creator = url.searchParams.get('creator');
+      const collection = url.searchParams.get('collection');
+      if (!creator || !collection) {
+        return Response.json({ error: 'Creator address and collection name required' }, { status: 400 });
+      }
+      return await getTokensByCreatorAndCollection(sql, creator, collection);
+    }
+
+    // Rarity routes
+    case '/api/rarities': {
+      return await getRarities(sql);
+    }
+    case '/api/rarities-by-lootbox': {
       const lootboxId = url.searchParams.get('lootboxId');
       if (!lootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
       return await getRaritiesByLootboxId(sql, parseInt(lootboxId));
-    case '/api/rarities-by-collection':
-      const rarityCreator = url.searchParams.get('creator');
-      const rarityCollection = url.searchParams.get('collection');
-      if (!rarityCreator || !rarityCollection) {
+    }
+    case '/api/rarities-by-collection': {
+      const creator = url.searchParams.get('creator');
+      const collection = url.searchParams.get('collection');
+      if (!creator || !collection) {
         return Response.json({ error: 'Creator address and collection name required' }, { status: 400 });
       }
-      return await getRaritiesByCreatorAndCollection(sql, rarityCreator, rarityCollection);
-    default:
+      return await getRaritiesByCreatorAndCollection(sql, creator, collection);
+    }
+
+    // Event routes
+    case '/api/event-tracking': {
+      return await getEventTracking(sql);
+    }
+
+    // VRF routes
+    case '/api/vrf-callbacks': {
+      return await getVRFCallbacks(sql);
+    }
+
+    default: {
       return new Response(
         JSON.stringify({ error: 'Not found' }), 
         { 
@@ -125,6 +172,7 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
           }
         }
       );
+    }
   }
 }
 
@@ -367,4 +415,41 @@ async function getRaritiesByCreatorAndCollection(sql: postgres.Sql, creator: str
     ORDER BY r."weight" DESC
   `;
   return Response.json({ rarities });
+}
+
+async function getTokensByLootboxId(sql: postgres.Sql, lootboxId: number) {
+  const tokens = await sql`
+    SELECT 
+      t.*,
+      r."rarityName",
+      r."weight" as "rarityWeight",
+      tc."name" as "collectionName"
+    FROM "Token" t
+    INNER JOIN "TokenCollection" tc ON tc.id = t."tokenCollectionId"
+    LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+    WHERE tc.id = (
+      SELECT "tokenCollectionId" 
+      FROM "Lootbox" 
+      WHERE id = ${lootboxId}
+    )
+    ORDER BY r."weight" DESC, t."tokenName" ASC
+  `;
+  return Response.json({ tokens });
+}
+
+async function getTokensByCreatorAndCollection(sql: postgres.Sql, creator: string, collection: string) {
+  const tokens = await sql`
+    SELECT 
+      t.*,
+      r."rarityName",
+      r."weight" as "rarityWeight",
+      tc."name" as "collectionName"
+    FROM "Token" t
+    INNER JOIN "TokenCollection" tc ON tc.id = t."tokenCollectionId"
+    LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+    WHERE tc.creator = ${creator}
+    AND tc.name = ${collection}
+    ORDER BY r."weight" DESC, t."tokenName" ASC
+  `;
+  return Response.json({ tokens });
 }
