@@ -133,6 +133,14 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
       }
       return await getTokensByCreatorAndCollection(sql, creator, collection);
     }
+    case '/api/tokens-by-lootbox-creator': {
+      const creatorAddress = url.searchParams.get('creator');
+      const collectionName = url.searchParams.get('collection');
+      if (!creatorAddress || !collectionName) {
+        return Response.json({ error: 'Creator address and collection name required' }, { status: 400 });
+      }
+      return await getTokensByLootboxCreator(sql, creatorAddress, collectionName);
+    }
 
     // Rarity routes
     case '/api/rarities': {
@@ -449,6 +457,26 @@ async function getTokensByCreatorAndCollection(sql: postgres.Sql, creator: strin
     LEFT JOIN "Rarity" r ON r.id = t."rarityId"
     WHERE tc.creator = ${creator}
     AND tc.name = ${collection}
+    ORDER BY r."weight" DESC, t."tokenName" ASC
+  `;
+  return Response.json({ tokens });
+}
+
+async function getTokensByLootboxCreator(sql: postgres.Sql, creatorAddress: string, collectionName: string) {
+  const tokens = await sql`
+    SELECT DISTINCT
+      t.*,
+      r."rarityName",
+      r."weight" as "rarityWeight",
+      tc."name" as "collectionName",
+      l."creatorAddress" as "lootboxCreator",
+      l."collectionResourceAddress"
+    FROM "Token" t
+    INNER JOIN "TokenCollection" tc ON tc.id = t."tokenCollectionId"
+    LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+    INNER JOIN "Lootbox" l ON l."collectionResourceAddress" = tc.creator
+    WHERE l."creatorAddress" = ${creatorAddress}
+    AND l."collectionName" = ${collectionName}
     ORDER BY r."weight" DESC, t."tokenName" ASC
   `;
   return Response.json({ tokens });
