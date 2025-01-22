@@ -97,6 +97,24 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
       return await getEventTracking(sql);
     case '/api/vrf-callbacks':
       return await getVRFCallbacks(sql);
+    case '/api/lootbox':
+      const creator = url.searchParams.get('creator');
+      const collection = url.searchParams.get('collection');
+      if (!creator || !collection) {
+        return Response.json({ error: 'Creator address and collection name required' }, { status: 400 });
+      }
+      return await getLootboxByCreatorAndCollection(sql, creator, collection);
+    case '/api/rarities-by-lootbox':
+      const lootboxId = url.searchParams.get('lootboxId');
+      if (!lootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
+      return await getRaritiesByLootboxId(sql, parseInt(lootboxId));
+    case '/api/rarities-by-collection':
+      const rarityCreator = url.searchParams.get('creator');
+      const rarityCollection = url.searchParams.get('collection');
+      if (!rarityCreator || !rarityCollection) {
+        return Response.json({ error: 'Creator address and collection name required' }, { status: 400 });
+      }
+      return await getRaritiesByCreatorAndCollection(sql, rarityCreator, rarityCollection);
     default:
       return new Response(
         JSON.stringify({ error: 'Not found' }), 
@@ -314,4 +332,39 @@ async function getTokenBalances(sql: postgres.Sql) {
     LIMIT 20
   `;
   return Response.json({ balances });
+}
+
+async function getLootboxByCreatorAndCollection(sql: postgres.Sql, creator: string, collection: string) {
+  const lootbox = await sql`
+    SELECT l.*, la.*
+    FROM "Lootbox" l
+    LEFT JOIN "LootboxAnalytics" la ON la."lootboxId" = l.id
+    WHERE l."creatorAddress" = ${creator}
+    AND l."collectionName" = ${collection}
+    LIMIT 1
+  `;
+  return Response.json({ lootbox: lootbox[0] });
+}
+
+async function getRaritiesByLootboxId(sql: postgres.Sql, lootboxId: number) {
+  const rarities = await sql`
+    SELECT r.*, l."collectionName"
+    FROM "Rarity" r
+    LEFT JOIN "Lootbox" l ON l.id = r."lootboxId"
+    WHERE r."lootboxId" = ${lootboxId}
+    ORDER BY r."weight" DESC
+  `;
+  return Response.json({ rarities });
+}
+
+async function getRaritiesByCreatorAndCollection(sql: postgres.Sql, creator: string, collection: string) {
+  const rarities = await sql`
+    SELECT r.*, l."collectionName"
+    FROM "Rarity" r
+    INNER JOIN "Lootbox" l ON l.id = r."lootboxId"
+    WHERE l."creatorAddress" = ${creator}
+    AND l."collectionName" = ${collection}
+    ORDER BY r."weight" DESC
+  `;
+  return Response.json({ rarities });
 }
