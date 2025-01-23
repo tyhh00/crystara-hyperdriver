@@ -4,6 +4,7 @@ export interface Env {
   // If you set another name in wrangler.toml as the value for 'binding',
   // replace "HYPERDRIVE" with the variable name you defined.
   HYPERDRIVE: Hyperdrive;
+  VALID_API_KEYS: string;  // Will contain the JSON string
 }
 
 // Add CORS headers to all responses
@@ -14,39 +15,45 @@ const corsHeaders = {
   'Access-Control-Max-Age': '86400',
 };
 
+async function validateApiKey(request: Request, env: Env): Promise<boolean> {
+  const apiKey = request.headers.get('x-api-key');
+  const validKeys = JSON.parse(env.VALID_API_KEYS);
+  return apiKey !== null && validKeys.includes(apiKey);
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // Handle OPTIONS request for CORS preflight
+    // Handle CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: corsHeaders
-      });
+      return new Response(null, { headers: corsHeaders });
     }
 
-    const sql = postgres(env.HYPERDRIVE.connectionString);
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // Check if route requires API key
+    if (path.startsWith('/api/private/')) {
+      if (!await validateApiKey(request, env)) {
+        return Response.json(
+          { error: 'Unauthorized - Invalid API key' },
+          { status: 401, headers: corsHeaders }
+        );
+      }
+    }
+
+    const sql = postgres(env.HYPERDRIVE.connectionString);
+
     try {
       const response = await handleRoute(path, sql, url);
-      
-      // Add CORS headers to the response
       Object.entries(corsHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
       });
-
       return response;
     } catch (error: any) {
       console.error('Error:', error);
-      return new Response(
-        JSON.stringify({ error: error.message }), 
-        { 
-          status: 500,
-          headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        }
+      return Response.json(
+        { error: error.message },
+        { status: 500, headers: corsHeaders }
       );
     } finally {
       await sql.end();
@@ -141,6 +148,14 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
       }
       return await getTokensByLootboxCreator(sql, creatorAddress, collectionName);
     }
+    case '/api/token-collection-by-lootbox-creator': {
+      const creatorAddress = url.searchParams.get('creator');
+      const collectionName = url.searchParams.get('collection');
+      if (!creatorAddress || !collectionName) {
+        return Response.json({ error: 'Creator address and collection name required' }, { status: 400 });
+      }
+      return await getTokenCollectionByLootbox(sql, creatorAddress, collectionName);
+    }
 
     // Rarity routes
     case '/api/rarities': {
@@ -168,6 +183,31 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
     // VRF routes
     case '/api/vrf-callbacks': {
       return await getVRFCallbacks(sql);
+    }
+
+    // Private routes
+    case '/api/private/accounts': {
+      return await getOffChainAccounts(sql);
+    }
+    case '/api/private/account': {
+      const walletAddress = url.searchParams.get('address');
+      if (!walletAddress) return Response.json({ error: 'Wallet address required' }, { status: 400 });
+      return await getOffChainAccount(sql, walletAddress);
+    }
+    case '/api/private/lootbox-stats': {
+      const lootboxId = url.searchParams.get('lootboxId');
+      if (!lootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
+      return await getLootboxStats(sql, parseInt(lootboxId));
+    }
+    case '/api/private/lootbox-likes': {
+      const lootboxId = url.searchParams.get('lootboxId');
+      if (!lootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
+      return await getLootboxLikes(sql, parseInt(lootboxId));
+    }
+    case '/api/private/lootbox-views': {
+      const lootboxId = url.searchParams.get('lootboxId');
+      if (!lootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
+      return await getLootboxViews(sql, parseInt(lootboxId));
     }
 
     default: {
@@ -480,4 +520,71 @@ async function getTokensByLootboxCreator(sql: postgres.Sql, creatorAddress: stri
     ORDER BY r."weight" DESC, t."tokenName" ASC
   `;
   return Response.json({ tokens });
+}
+
+async function getTokenCollectionByLootbox(sql: postgres.Sql, creatorAddress: string, collectionName: string) {
+  const collection = await sql`
+    SELECT DISTINCT
+      tc.*,
+      l."creatorAddress" as "lootboxCreator",
+      l."collectionResourceAddress"
+    FROM "TokenCollection" tc
+    INNER JOIN "Lootbox" l ON l."collectionResourceAddress" = tc.creator
+    WHERE l."creatorAddress" = ${creatorAddress}
+    AND l."collectionName" = ${collectionName}
+    LIMIT 1
+  `;
+  return Response.json({ collection: collection[0] });
+}
+
+// Add these query functions
+async function getOffChainAccounts(sql: postgres.Sql) {
+  const accounts = await sql`
+    SELECT * FROM "OFFChain_Account"
+    ORDER BY "createdAt" DESC
+    LIMIT 20
+  `;
+  return Response.json({ accounts });
+}
+
+async function getOffChainAccount(sql: postgres.Sql, walletAddress: string) {
+  const account = await sql`
+    SELECT * FROM "OFFChain_Account"
+    WHERE "walletAddress" = ${walletAddress}
+    LIMIT 1
+  `;
+  return Response.json({ account: account[0] });
+}
+
+async function getLootboxStats(sql: postgres.Sql, lootboxId: number) {
+  const stats = await sql`
+    SELECT * FROM "OFFChain_LootboxStats"
+    WHERE "lootboxId" = ${lootboxId}
+    LIMIT 1
+  `;
+  return Response.json({ stats: stats[0] });
+}
+
+async function getLootboxLikes(sql: postgres.Sql, lootboxId: number) {
+  const likes = await sql`
+    SELECT l.*, a."walletAddress"
+    FROM "OFFChain_LootboxLike" l
+    INNER JOIN "OFFChain_LootboxStats" s ON s.id = l."lootboxStatsId"
+    INNER JOIN "OFFChain_Account" a ON a.id = l."accountId"
+    WHERE s."lootboxId" = ${lootboxId}
+    ORDER BY l."createdAt" DESC
+  `;
+  return Response.json({ likes });
+}
+
+async function getLootboxViews(sql: postgres.Sql, lootboxId: number) {
+  const views = await sql`
+    SELECT v.*, a."walletAddress"
+    FROM "OFFChain_LootboxView" v
+    INNER JOIN "OFFChain_LootboxStats" s ON s.id = v."lootboxStatsId"
+    INNER JOIN "OFFChain_Account" a ON a.id = v."accountId"
+    WHERE s."lootboxId" = ${lootboxId}
+    ORDER BY v."viewedAt" DESC
+  `;
+  return Response.json({ views });
 }
