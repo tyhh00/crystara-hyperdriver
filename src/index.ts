@@ -643,43 +643,55 @@ async function getLootboxViews(sql: postgres.Sql, lootboxId: number) {
 }
 
 async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string) {
-  // First get all lootboxes for this creator
-  const lootboxes = await sql`
-    SELECT id, "collectionName"
-    FROM "Lootbox"
-    WHERE "creatorAddress" = ${creatorAddress}
-  `;
+  try {
+    // Log input
+    console.log('Fetching stats for creator:', creatorAddress);
 
-  // Then get all corresponding off-chain stats
-  const stats = await sql`
-    SELECT 
-      s.*,
-      l."collectionName",
-      l."creatorAddress",
-      COUNT(lk.id) as "likeCount",
-      COUNT(lv.id) as "viewCount"
-    FROM "OFFChain_LootboxStats" s
-    INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
-    LEFT JOIN "OFFChain_LootboxLike" lk ON lk."lootboxStatsId" = s.id
-    LEFT JOIN "OFFChain_LootboxView" lv ON lv."lootboxStatsId" = s.id
-    WHERE l."creatorAddress" = ${creatorAddress}
-    GROUP BY s.id, l.id
-    ORDER BY s."createdAt" DESC
-  `;
+    // First get all lootboxes for this creator
+    const lootboxes = await sql`
+      SELECT id, "collectionName"
+      FROM "Lootbox"
+      WHERE "creatorAddress" = ${creatorAddress}
+    `;
+    console.log('Found lootboxes:', lootboxes.length);
 
-  // Check if all lootboxes have stats
-  const synced = lootboxes.length === stats.length;
+    // Then get all corresponding off-chain stats
+    const stats = await sql`
+      SELECT 
+        s.*,
+        l."collectionName",
+        l."creatorAddress"
+      FROM "OFFChain_LootboxStats" s
+      INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
+      WHERE l."creatorAddress" = ${creatorAddress}
+      ORDER BY s."createdAt" DESC
+    `;
+    console.log('Found stats:', stats.length);
 
-  // Find lootboxes without stats
-  const unsyncedLootboxes = lootboxes.filter(
-    lootbox => !stats.some(stat => stat.lootboxId === lootbox.id)
-  );
+    // Check if all lootboxes have stats
+    const synced = lootboxes.length === stats.length;
 
-  return Response.json({
-    stats,
-    synced,
-    totalLootboxes: lootboxes.length,
-    syncedLootboxes: stats.length,
-    unsyncedLootboxes: synced ? [] : unsyncedLootboxes
-  });
+    // Find lootboxes without stats
+    const unsyncedLootboxes = lootboxes.filter(
+      lootbox => !stats.some(stat => stat.lootboxId === lootbox.id)
+    );
+
+    return Response.json({
+      stats,
+      synced,
+      totalLootboxes: lootboxes.length,
+      syncedLootboxes: stats.length,
+      unsyncedLootboxes: synced ? [] : unsyncedLootboxes
+    });
+  } catch (error) {
+    console.error('Error in getCreatorLootboxStats:', error);
+    return Response.json({
+      error: error.message,
+      details: {
+        creatorAddress,
+        errorType: error.name,
+        fullError: error.toString()
+      }
+    }, { status: 500 });
+  }
 }
