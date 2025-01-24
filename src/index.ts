@@ -645,7 +645,7 @@ async function getLootboxViews(sql: postgres.Sql, lootboxId: number) {
 async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string) {
   try {
     // Log input
-    console.log('Fetching stats for creator:', creatorAddress);
+    //console.log('Fetching stats for creator:', creatorAddress);
 
     // First get all lootboxes for this creator
     const lootboxes = await sql`
@@ -653,7 +653,7 @@ async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string)
       FROM "Lootbox"
       WHERE "creatorAddress" = ${creatorAddress}
     `;
-    console.log('Found lootboxes:', lootboxes.length);
+    //console.log('Found lootboxes:', lootboxes.length);
 
     // Then get all corresponding off-chain stats
     const stats = await sql`
@@ -666,7 +666,7 @@ async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string)
       WHERE l."creatorAddress" = ${creatorAddress}
       ORDER BY s."createdAt" DESC
     `;
-    console.log('Found stats:', stats.length);
+    //console.log('Found stats:', stats.length);
 
     // Check if all lootboxes have stats
     const synced = lootboxes.length === stats.length;
@@ -684,13 +684,13 @@ async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string)
       unsyncedLootboxes: synced ? [] : unsyncedLootboxes
     });
   } catch (error) {
-    console.error('Error in getCreatorLootboxStats:', error);
+    //console.error('Error in getCreatorLootboxStats:', error);
     return Response.json({
-      error: error.message,
+      error: (error as Error).message,
       details: {
         creatorAddress,
-        errorType: error.name,
-        fullError: error.toString()
+        errorType: (error as Error).name,
+        fullError: (error as Error).toString()
       }
     }, { status: 500 });
   }
