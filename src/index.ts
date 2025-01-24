@@ -209,6 +209,11 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
       if (!lootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
       return await getLootboxViews(sql, parseInt(lootboxId));
     }
+    case '/api/private/creator-lootbox-stats': {
+      const creatorAddress = url.searchParams.get('creator');
+      if (!creatorAddress) return Response.json({ error: 'Creator address required' }, { status: 400 });
+      return await getCreatorLootboxStats(sql, creatorAddress);
+    }
 
     default: {
       return new Response(
@@ -635,4 +640,46 @@ async function getLootboxViews(sql: postgres.Sql, lootboxId: number) {
     ORDER BY v."viewedAt" DESC
   `;
   return Response.json({ views });
+}
+
+async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string) {
+  // First get all lootboxes for this creator
+  const lootboxes = await sql`
+    SELECT id, "collectionName"
+    FROM "Lootbox"
+    WHERE "creatorAddress" = ${creatorAddress}
+  `;
+
+  // Then get all corresponding off-chain stats
+  const stats = await sql`
+    SELECT 
+      s.*,
+      l."collectionName",
+      l."creatorAddress",
+      COUNT(lk.id) as "likeCount",
+      COUNT(lv.id) as "viewCount"
+    FROM "OFFChain_LootboxStats" s
+    INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
+    LEFT JOIN "OFFChain_LootboxLike" lk ON lk."lootboxStatsId" = s.id
+    LEFT JOIN "OFFChain_LootboxView" lv ON lv."lootboxStatsId" = s.id
+    WHERE l."creatorAddress" = ${creatorAddress}
+    GROUP BY s.id, l.id
+    ORDER BY s."createdAt" DESC
+  `;
+
+  // Check if all lootboxes have stats
+  const synced = lootboxes.length === stats.length;
+
+  // Find lootboxes without stats
+  const unsyncedLootboxes = lootboxes.filter(
+    lootbox => !stats.some(stat => stat.lootboxId === lootbox.id)
+  );
+
+  return Response.json({
+    stats,
+    synced,
+    totalLootboxes: lootboxes.length,
+    syncedLootboxes: stats.length,
+    unsyncedLootboxes: synced ? [] : unsyncedLootboxes
+  });
 }
