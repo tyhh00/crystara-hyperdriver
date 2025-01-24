@@ -128,9 +128,9 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
       return await getTokenClaims(sql);
     }
     case '/api/tokens-by-lootbox': {
-      const lootboxId = url.searchParams.get('lootboxId');
-      if (!lootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
-      return await getTokensByLootboxId(sql, parseInt(lootboxId));
+      const tokenLootboxId = url.searchParams.get('lootboxId');
+      if (!tokenLootboxId) return Response.json({ error: 'Lootbox ID required' }, { status: 400 });
+      return await getTokensByLootboxId(sql, parseInt(tokenLootboxId));
     }
     case '/api/tokens-by-collection': {
       const creator = url.searchParams.get('creator');
@@ -247,15 +247,39 @@ async function getAccountBalances(sql: postgres.Sql, address: string) {
 
 // Lootbox queries
 async function getLootboxes(sql: postgres.Sql) {
-  const lootboxes = await sql`
-    SELECT l.*, la.*
-    FROM "Lootbox" l
-    LEFT JOIN "LootboxAnalytics" la ON la."lootboxId" = l.id
-    ORDER BY l."createdAt" DESC
-    LIMIT 20
-  `;
-  return Response.json({ lootboxes });
-}
+	const lootboxes = await sql`
+	  SELECT 
+		l.id,
+		l."creatorAddress",
+		l."collectionResourceAddress",
+		l."collectionName",
+		l."collectionDescription",
+		l."metadataUri",
+		l.price,
+		l."priceCoinType",
+		l."maxStock",
+		l."availableStock",
+		l."isActive",
+		l."isWhitelisted",
+		l."autoTriggerWhitelistTime",
+		l."autoTriggerActiveTime",
+		l."totalVolume",
+		l."purchaseCount",
+		l."createdAt",
+		l."updatedAt",
+		l."timestamp",
+		la.id as "analyticsId",
+		la."volume24h",
+		la."purchases24h",
+		la."uniqueBuyers24h",
+		la."updatedAt" as "analyticsUpdatedAt"
+	  FROM "Lootbox" l
+	  LEFT JOIN "LootboxAnalytics" la ON la."lootboxId" = l.id
+	  ORDER BY l."createdAt" DESC
+	  LIMIT 20
+	`;
+	return Response.json({ lootboxes });
+  }
 
 async function getLootboxAnalytics(sql: postgres.Sql) {
   const analytics = await sql`
@@ -431,16 +455,40 @@ async function getTokenBalances(sql: postgres.Sql) {
 }
 
 async function getLootboxByCreatorAndCollection(sql: postgres.Sql, creator: string, collection: string) {
-  const lootbox = await sql`
-    SELECT l.*, la.*
-    FROM "Lootbox" l
-    LEFT JOIN "LootboxAnalytics" la ON la."lootboxId" = l.id
-    WHERE l."creatorAddress" = ${creator}
-    AND l."collectionName" = ${collection}
-    LIMIT 1
-  `;
-  return Response.json({ lootbox: lootbox[0] });
-}
+	const lootbox = await sql`
+	  SELECT 
+		l.id,
+		l."creatorAddress",
+		l."collectionResourceAddress",
+		l."collectionName",
+		l."collectionDescription",
+		l."metadataUri",
+		l.price,
+		l."priceCoinType",
+		l."maxStock",
+		l."availableStock",
+		l."isActive",
+		l."isWhitelisted",
+		l."autoTriggerWhitelistTime",
+		l."autoTriggerActiveTime",
+		l."totalVolume",
+		l."purchaseCount",
+		l."createdAt",
+		l."updatedAt",
+		l."timestamp",
+		la.id as "analyticsId",
+		la."volume24h",
+		la."purchases24h",
+		la."uniqueBuyers24h",
+		la."updatedAt" as "analyticsUpdatedAt"
+	  FROM "Lootbox" l
+	  LEFT JOIN "LootboxAnalytics" la ON la."lootboxId" = l.id
+	  WHERE l."creatorAddress" = ${creator}
+	  AND l."collectionName" = ${collection}
+	  LIMIT 1
+	`;
+	return Response.json({ lootbox: lootbox[0] });
+  }
 
 async function getRaritiesByLootboxId(sql: postgres.Sql, lootboxId: number) {
   const rarities = await sql`
