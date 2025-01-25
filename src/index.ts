@@ -654,12 +654,23 @@ async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string,
       FROM "Lootbox"
       WHERE "creatorAddress" = ${creatorAddress}
     `;
-    //console.log('Found lootboxes:', lootboxes.length);
+    //console.log('includeLootboxes:', includeLootboxes, 'lootboxes:', lootboxes.length);
 
     // Get stats with optional lootbox details
     const stats = await sql`
       SELECT 
-        s.*,
+        s.id,
+        s."lootboxId",
+        s.url,
+        s."viewCount",
+        s."likeCount",
+        s."trendingScore",
+        s.categories,
+        s."createdAt",
+        s."updatedAt",
+        s."isAdvertised",
+        s."isVerified",
+        s."rarityColorMap",
         l."collectionName",
         l."creatorAddress",
         ${includeLootboxes ? sql`
@@ -675,9 +686,12 @@ async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string,
             'isActive', l."isActive",
             'isWhitelisted', l."isWhitelisted",
             'totalVolume', l."totalVolume",
-            'purchaseCount', l."purchaseCount"
-          ) as "lootbox",
-        ` : sql``}
+            'purchaseCount', l."purchaseCount",
+            'collectionDescription', l."collectionDescription",
+            'collectionResourceAddress', l."collectionResourceAddress",
+            'timestamp', l.timestamp
+          ) as lootbox,
+        ` : sql`NULL as lootbox,`}
         count(*) OVER() as total_count
       FROM "OFFChain_LootboxStats" s
       INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
