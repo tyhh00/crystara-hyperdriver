@@ -211,8 +211,9 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
     }
     case '/api/private/creator-lootbox-stats': {
       const creatorAddress = url.searchParams.get('creator');
+      const includeLootboxes = url.searchParams.get('includeLootboxes') === 'true';
       if (!creatorAddress) return Response.json({ error: 'Creator address required' }, { status: 400 });
-      return await getCreatorLootboxStats(sql, creatorAddress);
+      return await getCreatorLootboxStats(sql, creatorAddress, includeLootboxes);
     }
 
     default: {
@@ -642,7 +643,7 @@ async function getLootboxViews(sql: postgres.Sql, lootboxId: number) {
   return Response.json({ views });
 }
 
-async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string) {
+async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string, includeLootboxes: boolean = false) {
   try {
     // Log input
     //console.log('Fetching stats for creator:', creatorAddress);
@@ -655,12 +656,29 @@ async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string)
     `;
     //console.log('Found lootboxes:', lootboxes.length);
 
-    // Then get all corresponding off-chain stats
+    // Get stats with optional lootbox details
     const stats = await sql`
       SELECT 
         s.*,
         l."collectionName",
-        l."creatorAddress"
+        l."creatorAddress",
+        ${includeLootboxes ? sql`
+          jsonb_build_object(
+            'id', l.id,
+            'price', l.price,
+            'priceCoinType', l."priceCoinType",
+            'collectionName', l."collectionName",
+            'creatorAddress', l."creatorAddress",
+            'metadataUri', l."metadataUri",
+            'maxStock', l."maxStock",
+            'availableStock', l."availableStock",
+            'isActive', l."isActive",
+            'isWhitelisted', l."isWhitelisted",
+            'totalVolume', l."totalVolume",
+            'purchaseCount', l."purchaseCount"
+          ) as "lootbox",
+        ` : sql``}
+        count(*) OVER() as total_count
       FROM "OFFChain_LootboxStats" s
       INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
       WHERE l."creatorAddress" = ${creatorAddress}
@@ -684,7 +702,7 @@ async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string)
       unsyncedLootboxes: synced ? [] : unsyncedLootboxes
     });
   } catch (error) {
-    //console.error('Error in getCreatorLootboxStats:', error);
+    console.error('Error in getCreatorLootboxStats:', error);
     return Response.json({
       error: (error as Error).message,
       details: {
