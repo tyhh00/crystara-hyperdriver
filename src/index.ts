@@ -216,6 +216,13 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
       if (!creatorAddress) return Response.json({ error: 'Creator address required' }, { status: 400 });
       return await getCreatorLootboxStats(sql, creatorAddress, includeLootboxes, includeTokens);
     }
+    case '/api/private/lootbox-stats-by-url': {
+      const urlParam = url.searchParams.get('url');
+      const includeLootbox = url.searchParams.get('includeLootbox') === 'true';
+      const includeTokens = url.searchParams.get('includeTokens') === 'true';
+      if (!urlParam) return Response.json({ error: 'URL required' }, { status: 400 });
+      return await getLootboxStatsByUrl(sql, urlParam, includeLootbox, includeTokens);
+    }
 
     default: {
       return new Response(
@@ -729,6 +736,88 @@ async function getCreatorLootboxStats(sql: postgres.Sql, creatorAddress: string,
       error: (error as Error).message,
       details: {
         creatorAddress,
+        errorType: (error as Error).name,
+        fullError: (error as Error).toString()
+      }
+    }, { status: 500 });
+  }
+}
+
+async function getLootboxStatsByUrl(sql: postgres.Sql, url: string, includeLootbox: boolean = false, includeTokens: boolean = false) {
+  try {
+    // Get basic stats first
+    const stats = await sql`
+      SELECT 
+        s.*,
+        l."collectionName",
+        l."creatorAddress",
+        l."tokenCollectionId"
+      FROM "OFFChain_LootboxStats" s
+      INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
+      WHERE s.url = ${url}
+    `;
+
+    if (!stats[0]) {
+      return Response.json({ error: 'Stats not found for URL' }, { status: 404 });
+    }
+
+    if (includeLootbox || includeTokens) {
+      // Get lootbox details if requested
+      const lootboxDetails = includeLootbox ? await sql`
+        SELECT l.*
+        FROM "Lootbox" l
+        WHERE l.id = ${stats[0].lootboxId}
+      ` : [];
+
+      // Get token collection and tokens if requested
+      const tokenCollection = includeTokens && stats[0].tokenCollectionId ? await sql`
+        SELECT 
+          tc.*,
+          COALESCE(
+            NULLIF(
+              jsonb_agg(
+                CASE WHEN t.id IS NOT NULL THEN
+                  jsonb_build_object(
+                    'id', t.id,
+                    'tokenName', t."tokenName",
+                    'tokenUri', t."tokenUri",
+                    'maxSupply', t."maxSupply",
+                    'circulatingSupply', t."circulatingSupply",
+                    'tokensBurned', t."tokensBurned",
+                    'propertyVersion', t."propertyVersion",
+                    'rarityName', r."rarityName",
+                    'rarityWeight', r."weight"
+                  )
+                ELSE NULL END
+              ) FILTER (WHERE t.id IS NOT NULL),
+              '[null]'
+            ),
+            '[]'
+          )::jsonb as tokens
+        FROM "TokenCollection" tc
+        LEFT JOIN "Token" t ON t."tokenCollectionId" = tc.id
+        LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+        WHERE tc.id = ${stats[0].tokenCollectionId}
+        GROUP BY tc.id
+      ` : [];
+
+      // Merge the data
+      if (includeLootbox) {
+        stats[0].lootbox = lootboxDetails[0];
+      }
+      if (includeTokens && tokenCollection[0]) {
+        stats[0].tokenCollection = tokenCollection[0];
+      }
+    }
+
+    return Response.json({ stats: stats[0] });
+
+  } catch (error) {
+    console.error('Error in getLootboxStatsByUrl:', error);
+    return Response.json({
+      error: (error as Error).message,
+      details: {
+        url,
         errorType: (error as Error).name,
         fullError: (error as Error).toString()
       }
