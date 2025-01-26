@@ -223,6 +223,11 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
       if (!urlParam) return Response.json({ error: 'URL required' }, { status: 400 });
       return await getLootboxStatsByUrl(sql, urlParam, includeLootbox, includeTokens);
     }
+    case '/api/private/lootbox-stats-url-exists': {
+      const urlParam = url.searchParams.get('url');
+      if (!urlParam) return Response.json({ error: 'URL required' }, { status: 400 });
+      return await checkLootboxStatsUrlExists(sql, urlParam);
+    }
 
     default: {
       return new Response(
@@ -814,6 +819,33 @@ async function getLootboxStatsByUrl(sql: postgres.Sql, url: string, includeLootb
 
   } catch (error) {
     console.error('Error in getLootboxStatsByUrl:', error);
+    return Response.json({
+      error: (error as Error).message,
+      details: {
+        url,
+        errorType: (error as Error).name,
+        fullError: (error as Error).toString()
+      }
+    }, { status: 500 });
+  }
+}
+
+async function checkLootboxStatsUrlExists(sql: postgres.Sql, url: string) {
+  try {
+    const result = await sql`
+      SELECT EXISTS (
+        SELECT 1 
+        FROM "OFFChain_LootboxStats" 
+        WHERE url = ${url}
+      ) as "exists"
+    `;
+    
+    return Response.json({ 
+      exists: result[0].exists,
+      url 
+    });
+  } catch (error) {
+    console.error('Error in checkLootboxStatsUrlExists:', error);
     return Response.json({
       error: (error as Error).message,
       details: {
