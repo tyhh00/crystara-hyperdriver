@@ -32,7 +32,7 @@ export default {
     const path = url.pathname;
 
     // Check if route requires API key
-    if (path.startsWith('/api/private/') && false) {
+    if (path.startsWith('/api/private/')) {
       if (!await validateApiKey(request, env)) {
         return Response.json(
           { error: 'Unauthorized - Invalid API key' },
@@ -44,7 +44,7 @@ export default {
     const sql = postgres(env.HYPERDRIVE.connectionString);
 
     try {
-      const response = await handleRoute(path, sql, url);
+      const response = await handleRoute(path, sql, url, request);
       Object.entries(corsHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
       });
@@ -62,7 +62,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 // Helper function to handle routes
-async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<Response> {
+async function handleRoute(path: string, sql: postgres.Sql, url: URL, request: Request): Promise<Response> {
   switch (path) {
     // Account routes
     case '/api/accounts': {
@@ -227,6 +227,83 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL): Promise<R
       const urlParam = url.searchParams.get('url');
       if (!urlParam) return Response.json({ error: 'URL required' }, { status: 400 });
       return await checkLootboxStatsUrlExists(sql, urlParam);
+    }
+    case '/api/private/account/upsert': {
+      const walletAddress = url.searchParams.get('walletAddress')?.trim();
+      const email = url.searchParams.get('email')?.trim().toLowerCase();
+      const username = url.searchParams.get('username')?.trim();
+      const preferences = url.searchParams.get('preferences');
+      
+      // Input validation
+      if (!walletAddress) {
+        return Response.json({ error: 'Invalid wallet address format' }, { status: 400 });
+      }
+
+      // Email validation if provided
+      if (email) {
+        return Response.json({ error: 'Invalid email format' }, { status: 400 });
+      }
+
+      // Username validation if provided
+      if (username) {
+        if (username.length < 3 || username.length > 30) {
+          return Response.json({ error: 'Username must be between 3 and 30 characters' }, { status: 400 });
+        }
+        if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+          return Response.json({ error: 'Username can only contain letters, numbers, underscores, and hyphens' }, { status: 400 });
+        }
+      }
+
+      // Preferences validation
+      let parsedPreferences = null;
+      if (preferences) {
+        try {
+          parsedPreferences = JSON.parse(preferences);
+          if (typeof parsedPreferences !== 'object' || parsedPreferences === null) {
+            throw new Error('Preferences must be an object');
+          }
+        } catch (e) {
+          return Response.json({ error: 'Invalid preferences format' }, { status: 400 });
+        }
+      }
+
+      // Rate limiting check (implement your rate limiting logic here)
+      // const isRateLimited = await checkRateLimit(request.ip);
+      // if (isRateLimited) {
+      //   return Response.json({ error: 'Too many requests' }, { status: 429 });
+      // }
+
+      return await upsertOffChainAccount(sql, {
+        walletAddress,
+        email: email || null,
+        username: username || null,
+        preferences: parsedPreferences,
+        lastLoginAt: new Date()
+      });
+    }
+    case '/api/private/lootbox-stats/create': {
+ 
+        const body = await request.json() as {
+          lootboxId: number;
+          url: string;
+          rarityColors: Record<string, string>;
+          creatorAddress: string;
+          collectionName: string;
+        };
+        const { lootboxId, url, rarityColors, creatorAddress, collectionName } = body;
+
+        if (!lootboxId || !url || !creatorAddress || !collectionName) {
+          return Response.json({ error: 'Missing required fields' }, { status: 400 });
+        }
+
+        return await createOffchainLootboxStats(sql, {
+          lootboxId,
+          url,
+          rarityColors,
+          creatorAddress,
+          collectionName
+        });
+      
     }
 
     default: {
@@ -854,5 +931,216 @@ async function checkLootboxStatsUrlExists(sql: postgres.Sql, url: string) {
         fullError: (error as Error).toString()
       }
     }, { status: 500 });
+  }
+}
+
+async function upsertOffChainAccount(sql: postgres.Sql, data: {
+  walletAddress: string;
+  email: string | null;
+  username: string | null;
+  preferences: Record<string, unknown> | null;
+  lastLoginAt: Date;
+}) {
+  try {
+    // Additional server-side validation
+    if (!data.walletAddress || typeof data.walletAddress !== 'string') {
+      throw new Error('Invalid wallet address');
+    }
+
+    if (data.email && typeof data.email !== 'string') {
+      throw new Error('Invalid email format');
+    }
+
+    if (data.username && typeof data.username !== 'string') {
+      throw new Error('Invalid username format');
+    }
+
+    // Sanitize preferences before storing
+    const sanitizedPreferences = data.preferences ? JSON.stringify(data.preferences) : null;
+
+    // Use parameterized query to prevent SQL injection
+    const account = await sql`
+      INSERT INTO "OFFChain_Account" (
+        "walletAddress",
+        "email",
+        "username",
+        "preferences",
+        "lastLoginAt",
+        "createdAt",
+        "updatedAt"
+      ) 
+      VALUES (
+        ${data.walletAddress},
+        ${data.email},
+        ${data.username},
+        ${sanitizedPreferences}::jsonb,
+        ${data.lastLoginAt},
+        NOW(),
+        NOW()
+      )
+      ON CONFLICT ("walletAddress") 
+      DO UPDATE SET
+        "email" = EXCLUDED."email",
+        "username" = EXCLUDED."username",
+        "preferences" = EXCLUDED."preferences",
+        "lastLoginAt" = EXCLUDED."lastLoginAt",
+        "updatedAt" = NOW()
+      RETURNING 
+        "id",
+        "walletAddress",
+        "email",
+        "username",
+        "preferences",
+        "lastLoginAt",
+        "createdAt",
+        "updatedAt"
+    `;
+
+    // Only return necessary fields
+    return Response.json({ 
+      account: account[0],
+      message: 'Account updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Error in upsertOffChainAccount:', error);
+    
+    // Handle specific database errors
+    if ((error as Error).message.includes('unique constraint')) {
+      if ((error as Error).message.toLowerCase().includes('email')) {
+        return Response.json({ 
+          error: 'Email already in use',
+          code: 'EMAIL_TAKEN'
+        }, { 
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+      if ((error as Error).message.toLowerCase().includes('username')) {
+        return Response.json({ 
+          error: 'Username already taken',
+          code: 'USERNAME_TAKEN'
+        }, { 
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+    }
+
+    // Generic error response
+    return Response.json({
+      error: 'An error occurred while processing your request',
+      code: 'INTERNAL_ERROR',
+      details: {
+        message: (error as Error).message,
+        type: (error as Error).name
+      }
+    }, { 
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+  }
+}
+
+// Helper function to generate unique URL
+async function generateUniqueUrl(sql: postgres.Sql, baseUrl: string): Promise<string> {
+  const existing = await sql`
+    SELECT EXISTS(
+      SELECT 1 FROM "OFFChain_LootboxStats" WHERE url = ${baseUrl}
+    ) as "exists"
+  `;
+
+  if (!existing[0].exists) return baseUrl;
+
+  const randomSuffix = Math.random().toString().substring(2, 11);
+  const newUrl = `${baseUrl}-${randomSuffix}`;
+
+  const existingWithSuffix = await sql`
+    SELECT EXISTS(
+      SELECT 1 FROM "OFFChain_LootboxStats" WHERE url = ${newUrl}
+    ) as "exists"
+  `;
+
+  return existingWithSuffix[0].exists ? generateUniqueUrl(sql, baseUrl) : newUrl;
+}
+
+// Main creation function
+async function createOffchainLootboxStats(
+  sql: postgres.Sql,
+  data: {
+    lootboxId: number;
+    url: string;
+    rarityColors: Record<string, string>;
+    creatorAddress: string;
+    collectionName: string;
+  }
+): Promise<Response> {
+  try {
+    // Verify lootbox ownership
+    const lootboxResponse = await sql`
+      SELECT id, "creatorAddress"
+      FROM "Lootbox"
+      WHERE id = ${data.lootboxId}
+      AND "creatorAddress" = ${data.creatorAddress}
+      AND "collectionName" = ${data.collectionName}
+      LIMIT 1
+    `;
+
+    if (!lootboxResponse[0]) {
+      return Response.json({ error: 'Invalid lootbox ID or ownership' }, { status: 400 });
+    }
+
+    // Check if record already exists
+    const existing = await sql`
+      SELECT id FROM "OFFChain_LootboxStats"
+      WHERE "lootboxId" = ${data.lootboxId}
+      LIMIT 1
+    `;
+
+    if (existing[0]) {
+      return Response.json(
+        { message: 'Offchain stats already exist' },
+        { status: 409 }
+      );
+    }
+
+    // Generate unique URL if needed
+    const uniqueUrl = await generateUniqueUrl(sql, data.url);
+
+    // Create the record
+    const offchainLootbox = await sql`
+      INSERT INTO "OFFChain_LootboxStats" (
+        "lootboxId",
+        "url",
+        "rarityColorMap",
+        "updatedAt",
+        "createdAt"
+      ) VALUES (
+        ${data.lootboxId},
+        ${uniqueUrl},
+        ${JSON.stringify(data.rarityColors)},
+        NOW(),
+        NOW()
+      )
+      RETURNING *
+    `;
+
+    return Response.json({
+      ...offchainLootbox[0],
+      urlModified: uniqueUrl !== data.url
+    });
+
+  } catch (error) {
+    console.error('Create offchain error:', error);
+    return Response.json(
+      { error: 'Failed to create offchain data' },
+      { status: 500 }
+    );
   }
 }
