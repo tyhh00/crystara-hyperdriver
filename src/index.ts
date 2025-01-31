@@ -321,12 +321,14 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL, request: R
       const mustHaveUrl = url.searchParams.get('mustHaveUrl') === 'true';
       const isActive = url.searchParams.get('isActive') === 'true';
       const isWhitelisted = url.searchParams.get('isWhitelisted') === 'true';
+      const includeTokenCollection = url.searchParams.get('includeTokenCollection') === 'true';
       const includeTokens = url.searchParams.get('includeTokens') === 'true';
 
       return await getAllLootboxStats(sql, {
         mustHaveUrl,
         isActive,
         isWhitelisted,
+        includeTokenCollection,
         includeTokens
       });
     }
@@ -1259,6 +1261,7 @@ async function getAllLootboxStats(
     mustHaveUrl: boolean;
     isActive: boolean;
     isWhitelisted: boolean;
+    includeTokenCollection: boolean;
     includeTokens: boolean;
   }
 ): Promise<Response> {
@@ -1270,7 +1273,9 @@ async function getAllLootboxStats(
         l."creatorAddress",
         l."isActive",
         l."isWhitelisted",
-        l."tokenCollectionId"
+        l."tokenCollectionId",
+        l."collectionDescription",
+        l."metadataUri"
       FROM "OFFChain_LootboxStats" s
       INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
       WHERE 
@@ -1280,37 +1285,51 @@ async function getAllLootboxStats(
       ORDER BY s."createdAt" DESC
     `;
 
-    if (filters.includeTokens) {
-      // Get all relevant token collections and their tokens in one query
-      const tokenCollections = await sql`
+    if (filters.includeTokenCollection || filters.includeTokens) {
+      // Get token collections
+      const tokenCollectionsQuery = sql`
         SELECT 
           tc.id,
-          tc.*,
-          COALESCE(
-            jsonb_agg(
-              jsonb_build_object(
-                'id', t.id,
-                'tokenName', t."tokenName",
-                'tokenUri', t."tokenUri",
-                'maxSupply', t."maxSupply",
-                'circulatingSupply', t."circulatingSupply",
-                'tokensBurned', t."tokensBurned",
-                'propertyVersion', t."propertyVersion",
-                'rarityName', r."rarityName",
-                'rarityWeight', r."weight"
-              )
-            ) FILTER (WHERE t.id IS NOT NULL),
-            '[]'
-          )::jsonb as tokens
+          tc.name,
+          tc.creator,
+          tc.description,
+          tc."metadataUri",
+          tc."createdAt",
+          tc."updatedAt"
+          ${filters.includeTokens ? sql`, 
+            COALESCE(
+              jsonb_agg(
+                jsonb_build_object(
+                  'id', t.id,
+                  'tokenName', t."tokenName",
+                  'tokenUri', t."tokenUri",
+                  'maxSupply', t."maxSupply",
+                  'circulatingSupply', t."circulatingSupply",
+                  'tokensBurned', t."tokensBurned",
+                  'propertyVersion', t."propertyVersion",
+                  'rarityName', r."rarityName",
+                  'rarityWeight', r."weight",
+                  'description', t.description,
+                  'metadata', t.metadata,
+                  'createdAt', t."createdAt",
+                  'updatedAt', t."updatedAt"
+                ) ORDER BY r."weight" DESC NULLS LAST, t."tokenName" ASC
+              ) FILTER (WHERE t.id IS NOT NULL),
+              '[]'
+            )::jsonb as tokens` : sql``}
         FROM "TokenCollection" tc
-        LEFT JOIN "Token" t ON t."tokenCollectionId" = tc.id
-        LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+        ${filters.includeTokens ? sql`
+          LEFT JOIN "Token" t ON t."tokenCollectionId" = tc.id
+          LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+        ` : sql``}
         WHERE tc.id IN (
           SELECT DISTINCT "tokenCollectionId" 
           FROM "Lootbox" 
           WHERE id IN (${sql(stats.map(s => s.lootboxId))}))
         GROUP BY tc.id
       `;
+
+      const tokenCollections = await tokenCollectionsQuery;
 
       // Map token collections to their respective stats
       stats.forEach(stat => {
