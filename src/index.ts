@@ -321,11 +321,13 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL, request: R
       const mustHaveUrl = url.searchParams.get('mustHaveUrl') === 'true';
       const isActive = url.searchParams.get('isActive') === 'true';
       const isWhitelisted = url.searchParams.get('isWhitelisted') === 'true';
+      const includeTokens = url.searchParams.get('includeTokens') === 'true';
 
       return await getAllLootboxStats(sql, {
         mustHaveUrl,
         isActive,
-        isWhitelisted
+        isWhitelisted,
+        includeTokens
       });
     }
 
@@ -1257,6 +1259,7 @@ async function getAllLootboxStats(
     mustHaveUrl: boolean;
     isActive: boolean;
     isWhitelisted: boolean;
+    includeTokens: boolean;
   }
 ): Promise<Response> {
   try {
@@ -1266,7 +1269,8 @@ async function getAllLootboxStats(
         l."collectionName",
         l."creatorAddress",
         l."isActive",
-        l."isWhitelisted"
+        l."isWhitelisted",
+        l."tokenCollectionId"
       FROM "OFFChain_LootboxStats" s
       INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
       WHERE 
@@ -1275,6 +1279,46 @@ async function getAllLootboxStats(
         AND ${!filters.isWhitelisted || sql`l."isWhitelisted" = true`}
       ORDER BY s."createdAt" DESC
     `;
+
+    if (filters.includeTokens) {
+      // Get all relevant token collections and their tokens in one query
+      const tokenCollections = await sql`
+        SELECT 
+          tc.id,
+          tc.*,
+          COALESCE(
+            jsonb_agg(
+              jsonb_build_object(
+                'id', t.id,
+                'tokenName', t."tokenName",
+                'tokenUri', t."tokenUri",
+                'maxSupply', t."maxSupply",
+                'circulatingSupply', t."circulatingSupply",
+                'tokensBurned', t."tokensBurned",
+                'propertyVersion', t."propertyVersion",
+                'rarityName', r."rarityName",
+                'rarityWeight', r."weight"
+              )
+            ) FILTER (WHERE t.id IS NOT NULL),
+            '[]'
+          )::jsonb as tokens
+        FROM "TokenCollection" tc
+        LEFT JOIN "Token" t ON t."tokenCollectionId" = tc.id
+        LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+        WHERE tc.id IN (
+          SELECT DISTINCT "tokenCollectionId" 
+          FROM "Lootbox" 
+          WHERE id IN (${sql(stats.map(s => s.lootboxId))}))
+        GROUP BY tc.id
+      `;
+
+      // Map token collections to their respective stats
+      stats.forEach(stat => {
+        if (stat.tokenCollectionId) {
+          stat.tokenCollection = tokenCollections.find(tc => tc.id === stat.tokenCollectionId);
+        }
+      });
+    }
 
     return Response.json({
       stats,
