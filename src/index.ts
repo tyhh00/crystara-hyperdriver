@@ -107,7 +107,13 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL, request: R
       return await getTokenTransactions(sql);
     }
     case '/api/token-balances': {
-      return await getTokenBalances(sql);
+      const address = url.searchParams.get('address');
+      const greaterThanZeroBalance = url.searchParams.get('greaterThanZeroBalance') === 'true';
+
+      return await getTokenBalances(sql, {
+        address,
+        greaterThanZeroBalance
+      });
     }
     case '/api/token-data': {
       return await getTokenData(sql);
@@ -561,20 +567,55 @@ async function getLootboxRewards(sql: postgres.Sql) {
   return Response.json({ rewards });
 }
 
-async function getTokenBalances(sql: postgres.Sql) {
-  const balances = await sql`
-    SELECT 
-      tb.*,
-      t."tokenName",
-      t."tokenUri",
-      a.address as "accountAddress"
-    FROM "TokenBalance" tb
-    INNER JOIN "Account" a ON a.address = tb."accountAddress"
-    LEFT JOIN "Token" t ON t.id = tb."tokenId"
-    ORDER BY tb."lastUpdated" DESC
-    LIMIT 20
-  `;
-  return Response.json({ balances });
+async function getTokenBalances(
+  sql: postgres.Sql,
+  filters: {
+    address?: string | null;
+    greaterThanZeroBalance: boolean;
+  }
+): Promise<Response> {
+  try {
+    const balances = await sql`
+      SELECT 
+        tb.*,
+        t."tokenName",
+        t."tokenUri",
+        t.description,
+        t.metadata,
+        t."maxSupply",
+        t."circulatingSupply",
+        t."tokensBurned",
+        t."propertyVersion",
+        r."rarityName",
+        r."weight" as "rarityWeight",
+        a.address as "accountAddress"
+      FROM "TokenBalance" tb
+      INNER JOIN "Account" a ON a.address = tb."accountAddress"
+      LEFT JOIN "Token" t ON t.id = tb."tokenId"
+      LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+      WHERE 1=1
+      ${filters.address ? sql`AND tb."accountAddress" = ${filters.address}` : sql``}
+      ${filters.greaterThanZeroBalance ? sql`AND tb.balance > 0` : sql``}
+      ORDER BY tb."lastUpdated" DESC
+      ${!filters.address ? sql`LIMIT 20` : sql``}
+    `;
+
+    return Response.json({
+      balances,
+      totalCount: balances.length,
+      filters
+    });
+
+  } catch (error) {
+    console.error('Error in getTokenBalances:', error);
+    return Response.json({
+      error: 'Failed to fetch token balances',
+      details: {
+        filters,
+        errorType: (error as Error).name
+      }
+    }, { status: 500 });
+  }
 }
 
 async function getLootboxByCreatorAndCollection(sql: postgres.Sql, creator: string, collection: string) {
