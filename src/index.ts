@@ -317,6 +317,17 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL, request: R
 
       return await getLootboxStatsByCollection(sql, creatorAddress, collectionName, includeLootbox, includeTokens);
     }
+    case '/api/private/all-lootbox-stats': {
+      const mustHaveUrl = url.searchParams.get('mustHaveUrl') === 'true';
+      const isActive = url.searchParams.get('isActive') === 'true';
+      const isWhitelisted = url.searchParams.get('isWhitelisted') === 'true';
+
+      return await getAllLootboxStats(sql, {
+        mustHaveUrl,
+        isActive,
+        isWhitelisted
+      });
+    }
 
     default: {
       return new Response(
@@ -1234,6 +1245,49 @@ async function getLootboxStatsByCollection(
       details: {
         creatorAddress,
         collectionName,
+        errorType: (error as Error).name
+      }
+    }, { status: 500 });
+  }
+}
+
+async function getAllLootboxStats(
+  sql: postgres.Sql,
+  filters: {
+    mustHaveUrl: boolean;
+    isActive: boolean;
+    isWhitelisted: boolean;
+  }
+): Promise<Response> {
+  try {
+    const stats = await sql`
+      SELECT 
+        s.*,
+        l."collectionName",
+        l."creatorAddress",
+        l."isActive",
+        l."isWhitelisted"
+      FROM "OFFChain_LootboxStats" s
+      INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
+      WHERE 
+        ${!filters.mustHaveUrl || sql`s.url IS NOT NULL`}
+        AND ${!filters.isActive || sql`l."isActive" = true`}
+        AND ${!filters.isWhitelisted || sql`l."isWhitelisted" = true`}
+      ORDER BY s."createdAt" DESC
+    `;
+
+    return Response.json({
+      stats,
+      totalCount: stats.length,
+      filters
+    });
+
+  } catch (error) {
+    console.error('Error in getAllLootboxStats:', error);
+    return Response.json({
+      error: 'Failed to fetch lootbox stats',
+      details: {
+        filters,
         errorType: (error as Error).name
       }
     }, { status: 500 });
