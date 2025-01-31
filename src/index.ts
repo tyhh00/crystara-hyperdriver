@@ -305,6 +305,18 @@ async function handleRoute(path: string, sql: postgres.Sql, url: URL, request: R
         });
       
     }
+    case '/api/private/lootbox-stats-by-collection': {
+      const creatorAddress = url.searchParams.get('creator');
+      const collectionName = url.searchParams.get('collection');
+      const includeLootbox = url.searchParams.get('includeLootbox') === 'true';
+      const includeTokens = url.searchParams.get('includeTokens') === 'true';
+
+      if (!creatorAddress || !collectionName) {
+        return Response.json({ error: 'Creator address and collection name required' }, { status: 400 });
+      }
+
+      return await getLootboxStatsByCollection(sql, creatorAddress, collectionName, includeLootbox, includeTokens);
+    }
 
     default: {
       return new Response(
@@ -1142,5 +1154,88 @@ async function createOffchainLootboxStats(
       { error: 'Failed to create offchain data' },
       { status: 500 }
     );
+  }
+}
+
+async function getLootboxStatsByCollection(
+  sql: postgres.Sql,
+  creatorAddress: string,
+  collectionName: string,
+  includeLootbox: boolean = false,
+  includeTokens: boolean = false
+): Promise<Response> {
+  try {
+    // Get basic stats first
+    const stats = await sql`
+      SELECT 
+        s.*,
+        l."collectionName",
+        l."creatorAddress",
+        l."tokenCollectionId"
+      FROM "OFFChain_LootboxStats" s
+      INNER JOIN "Lootbox" l ON l.id = s."lootboxId"
+      WHERE l."creatorAddress" = ${creatorAddress}
+      AND l."collectionName" = ${collectionName}
+      LIMIT 1
+    `;
+
+    if (!stats[0]) {
+      return Response.json({ error: 'Stats not found' }, { status: 404 });
+    }
+
+    let result = stats[0];
+
+    if (includeLootbox) {
+      const lootbox = await sql`
+        SELECT * FROM "Lootbox"
+        WHERE "creatorAddress" = ${creatorAddress}
+        AND "collectionName" = ${collectionName}
+        LIMIT 1
+      `;
+      result.lootbox = lootbox[0];
+    }
+
+    if (includeTokens && result.tokenCollectionId) {
+      const tokenCollection = await sql`
+        SELECT 
+          tc.*,
+          COALESCE(
+            jsonb_agg(
+              jsonb_build_object(
+                'id', t.id,
+                'tokenName', t."tokenName",
+                'tokenUri', t."tokenUri",
+                'maxSupply', t."maxSupply",
+                'circulatingSupply', t."circulatingSupply",
+                'tokensBurned', t."tokensBurned",
+                'propertyVersion', t."propertyVersion",
+                'rarityName', r."rarityName",
+                'rarityWeight', r."weight"
+              )
+            ) FILTER (WHERE t.id IS NOT NULL),
+            '[]'
+          )::jsonb as tokens
+        FROM "TokenCollection" tc
+        LEFT JOIN "Token" t ON t."tokenCollectionId" = tc.id
+        LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+        WHERE tc.id = ${result.tokenCollectionId}
+        GROUP BY tc.id
+        LIMIT 1
+      `;
+      result.tokenCollection = tokenCollection[0];
+    }
+
+    return Response.json(result);
+
+  } catch (error) {
+    console.error('Error in getLootboxStatsByCollection:', error);
+    return Response.json({
+      error: 'Failed to fetch lootbox stats',
+      details: {
+        creatorAddress,
+        collectionName,
+        errorType: (error as Error).name
+      }
+    }, { status: 500 });
   }
 }
