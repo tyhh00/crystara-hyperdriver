@@ -1287,7 +1287,46 @@ async function getAllLootboxStats(
 
     if (filters.includeTokenCollection || filters.includeTokens) {
       // Get token collections
-      const tokenCollectionsQuery = sql`
+      const tokenCollectionsQuery = filters.includeTokens ? sql`
+        SELECT 
+          tc.id,
+          tc.name,
+          tc.creator,
+          tc.description,
+          tc."metadataUri",
+          tc."createdAt",
+          tc."updatedAt",
+          COALESCE(
+            jsonb_agg(
+              jsonb_build_object(
+                'id', t.id,
+                'tokenName', t."tokenName",
+                'tokenUri', t."tokenUri",
+                'maxSupply', t."maxSupply",
+                'circulatingSupply', t."circulatingSupply",
+                'tokensBurned', t."tokensBurned",
+                'propertyVersion', t."propertyVersion",
+                'rarityName', r."rarityName",
+                'rarityWeight', r."weight",
+                'description', t.description,
+                'metadata', t.metadata,
+                'createdAt', t."createdAt",
+                'updatedAt', t."updatedAt"
+              ) ORDER BY r."weight" DESC NULLS LAST, t."tokenName" ASC
+            ) FILTER (WHERE t.id IS NOT NULL),
+            '[]'
+          )::jsonb as tokens
+        FROM "TokenCollection" tc
+        LEFT JOIN "Token" t ON t."tokenCollectionId" = tc.id
+        LEFT JOIN "Rarity" r ON r.id = t."rarityId"
+        WHERE tc.id IN (
+          SELECT DISTINCT "tokenCollectionId" 
+          FROM "Lootbox" 
+          WHERE id IN (${sql(stats.map(s => s.lootboxId))})
+          AND "tokenCollectionId" IS NOT NULL
+        )
+        GROUP BY tc.id, tc.name, tc.creator, tc.description, tc."metadataUri", tc."createdAt", tc."updatedAt"
+      ` : sql`
         SELECT 
           tc.id,
           tc.name,
@@ -1296,37 +1335,13 @@ async function getAllLootboxStats(
           tc."metadataUri",
           tc."createdAt",
           tc."updatedAt"
-          ${filters.includeTokens ? sql`, 
-            COALESCE(
-              jsonb_agg(
-                jsonb_build_object(
-                  'id', t.id,
-                  'tokenName', t."tokenName",
-                  'tokenUri', t."tokenUri",
-                  'maxSupply', t."maxSupply",
-                  'circulatingSupply', t."circulatingSupply",
-                  'tokensBurned', t."tokensBurned",
-                  'propertyVersion', t."propertyVersion",
-                  'rarityName', r."rarityName",
-                  'rarityWeight', r."weight",
-                  'description', t.description,
-                  'metadata', t.metadata,
-                  'createdAt', t."createdAt",
-                  'updatedAt', t."updatedAt"
-                ) ORDER BY r."weight" DESC NULLS LAST, t."tokenName" ASC
-              ) FILTER (WHERE t.id IS NOT NULL),
-              '[]'
-            )::jsonb as tokens` : sql``}
         FROM "TokenCollection" tc
-        ${filters.includeTokens ? sql`
-          LEFT JOIN "Token" t ON t."tokenCollectionId" = tc.id
-          LEFT JOIN "Rarity" r ON r.id = t."rarityId"
-        ` : sql``}
         WHERE tc.id IN (
           SELECT DISTINCT "tokenCollectionId" 
           FROM "Lootbox" 
-          WHERE id IN (${sql(stats.map(s => s.lootboxId))}))
-        GROUP BY tc.id
+          WHERE id IN (${sql(stats.map(s => s.lootboxId))})
+          AND "tokenCollectionId" IS NOT NULL
+        )
       `;
 
       const tokenCollections = await tokenCollectionsQuery;
